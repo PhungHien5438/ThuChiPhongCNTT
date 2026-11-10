@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="vi">
+
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Quỹ Thu Chi Phòng CNTT</title>
+	<!-- Cdn Tailwind CSS để làm giao diện mobile -->
+	<script src="https://cdn.tailwindcss.com"></script>
+	<!-- Thư viện Supabase JS để kết nối DB -->
+	<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+
+<body class="bg-gray-100 flex justify-center min-h-screen">
+	<div class="w-full max-w-md bg-white min-h-screen shadow-lg flex flex-col p-4">
+
+		<!-- Hiển thị Số Dư Tổng -->
+		<div class="bg-gradient-to-r from-teal-500 to-emerald-600 rounded-2xl p-5 text-white shadow-md mb-5">
+			<p class="text-sm opacity-80">Quỹ còn lại (Số dư)</p>
+			<h1 id="balance" class="text-3xl font-bold mt-1">0 đ</h1>
+		</div>
+
+		<!-- Form Nhập Khoản Thu/Chi -->
+		<div class="bg-gray-50 p-4 rounded-xl mb-5 border border-gray-200">
+			<div class="mb-3">
+				<label class="block text-sm font-medium text-gray-700 mb-1">Số tiền (đ)</label>
+				<!-- Đổi thành type="text" và thêm inputmode="numeric" để mobile hiện bàn phím số -->
+				<input type="text" id="amount" inputmode="numeric" oninput="formatCurrencyInput(this)"
+					placeholder="Ví dụ: 1.000.000"
+					class="w-full p-2.5 border rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none font-semibold text-gray-800">
+			</div>
+			<div class="mb-4">
+				<label class="block text-sm font-medium text-gray-700 mb-1">Ghi chú (Ai nộp/Mua gì)</label>
+				<input type="text" id="note" placeholder="Ví dụ: Chi sinh nhật..."
+					class="w-full p-2.5 border rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none">
+			</div>
+			<div class="grid grid-cols-2 gap-3">
+				<button onclick="saveTransaction('income')"
+					class="bg-emerald-500 hover:bg-emerald-600 text-white font-semibold py-2.5 rounded-lg transition">+
+					Thu Tiền</button>
+				<button onclick="saveTransaction('expense')"
+					class="bg-rose-500 hover:bg-rose-600 text-white font-semibold py-2.5 rounded-lg transition">- Chi
+					Tiền</button>
+			</div>
+		</div>
+
+		<!-- Bộ Lọc & Lịch Sử Realtime -->
+		<div class="flex-1 flex flex-col">
+			<div class="flex justify-between items-center mb-3">
+				<h2 class="font-bold text-gray-800 text-lg">Lịch sử quỹ chung</h2>
+				<select id="filter" onchange="fetchData()"
+					class="p-1.5 border rounded-lg text-sm bg-white outline-none">
+					<option value="all">Tất cả</option>
+					<option value="income">Chỉ Khoản Thu</option>
+					<option value="expense">Chỉ Khoản Chi</option>
+				</select>
+			</div>
+
+			<!-- Danh sách hiển thị cuộn trên mobile -->
+			<div id="list" class="space-y-2 flex-1 overflow-y-auto max-h-[350px]">
+				<p class="text-center text-gray-400 text-sm mt-4">Đang tải dữ liệu...</p>
+			</div>
+		</div>
+	</div>
+
+	<script>
+		const SUPABASE_URL = "https://hmqovtoxirdqaxvxkjsk.supabase.co/";
+		const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhtcW92dG94aXJkcWF4dnhranNrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA1MTkyNjIsImV4cCI6MjA5NjA5NTI2Mn0.hCkHljsRfmXJrKu7oRhiSD0wscQzwXQN3UwW_HzOaKg";
+		console.log("🚀 Khởi tạo kết nối Supabase...");
+		const supabaseClient = window.supabase.createClient(
+			SUPABASE_URL,
+			SUPABASE_ANON_KEY
+		);
+		console.log("✅ Kết nối Supabase đã sẵn sàng!");
+
+		// Hàm lấy dữ liệu từ Supabase về hiển thị
+		async function fetchData() {
+			const filter = document.getElementById('filter').value;
+
+			// 1. Lấy toàn bộ data để tính số dư tổng chính xác nhất
+			let { data: allData, error: err1 } = await supabaseClient
+				.from('inverntories_CNTT')
+				.select('*')
+				.order('created_at', { ascending: false });
+
+			if (err1) { console.error(err1); return; }
+
+			// Tính số dư
+			let totalIncome = 0;
+			let totalExpense = 0;
+			allData.forEach(item => {
+				if (item.type === 'income') totalIncome += Number(item.amount);
+				else totalExpense += Number(item.amount);
+			});
+			document.getElementById('balance').innerText = (totalIncome - totalExpense).toLocaleString('vi-VN') + ' đ';
+
+			// 2. Lọc và render danh sách hiển thị
+			const listEl = document.getElementById('list');
+			let html = '';
+
+			allData.forEach(item => {
+				if (filter === 'all' || filter === item.type) {
+					const isIncome = item.type === 'income';
+					// Định dạng ngày giờ rút gọn
+					const date = new Date(item.created_at).toLocaleDateString('vi-VN', { hour: '2-digit', minute: '2-digit' });
+
+					html += `
+                        <div class="flex justify-between items-center p-3 bg-white border rounded-xl shadow-sm">
+                            <div class="max-w-[70%]">
+                                <p class="font-medium text-gray-800 break-words">${item.note}</p>
+                                <p class="text-[10px] text-gray-400">${date}</p>
+                            </div>
+                            <span class="font-bold whitespace-nowrap ${isIncome ? 'text-emerald-500' : 'text-rose-500'}">
+                                ${isIncome ? '+' : '-'}${Number(item.amount).toLocaleString('vi-VN')} đ
+                            </span>
+                        </div>
+                    `;
+				}
+			});
+
+			listEl.innerHTML = html || '<p class="text-center text-gray-400 text-sm mt-4">Chưa có giao dịch nào.</p>';
+		}
+
+		// 1. Hàm tự động định dạng số tiền thành 1.000.000 khi đang gõ
+		function formatCurrencyInput(input) {
+			// Chỉ giữ lại các chữ số, xóa hết ký tự khác (bao gồm cả dấu chấm cũ)
+			let value = input.value.replace(/\D/g, "");
+
+			if (value === "") {
+				input.value = "";
+				return;
+			}
+
+			// Định dạng lại chuỗi số thành dạng có dấu chấm phân cách hàng nghìn
+			input.value = Number(value).toLocaleString('vi-VN');
+		}
+
+		// 2. Cập nhật lại Hàm lưu dữ liệu lên Supabase (Cần sửa đổi cách lấy số tiền)
+		async function saveTransaction(type) {
+			const amountInput = document.getElementById('amount');
+			const noteInput = document.getElementById('note');
+
+			// Xóa tất cả dấu chấm trong ô nhập để chuyển về số thuần túy (Ví dụ: "1.000.000" -> 1000000)
+			const rawAmount = amountInput.value.replace(/\./g, "");
+			const amount = parseFloat(rawAmount);
+			const note = noteInput.value.trim();
+
+			if (isNaN(amount) || amount <= 0) {
+				alert('Vui lòng nhập số tiền hợp lý!');
+				return;
+			}
+			if (!note) {
+				alert('Vui lòng nhập ghi chú!');
+				return;
+			}
+
+			// Gửi dữ liệu nguyên bản dạng số lên Supabase
+			const { error } = await supabaseClient
+				.from('inverntories_CNTT')
+				.insert([{ amount, note, type }]);
+
+			if (error) {
+				alert('Lỗi khi lưu dữ liệu: ' + error.message);
+			} else {
+				// Thành công thì xóa form và load lại data
+				amountInput.value = '';
+				noteInput.value = '';
+				fetchData();
+			}
+		}
+
+		// Tự động tải dữ liệu khi vừa mở trang web
+		fetchData();
+	</script>
+</body>
+
+</html>
